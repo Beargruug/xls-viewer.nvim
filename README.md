@@ -17,12 +17,7 @@ A Neovim plugin for viewing Excel files (`.xls` and `.xlsx`(workes but need some
 
 ## 📸 Screenshots
 
-```
-Column1  │  Column2  │  Column3  │  Column4
-─────────┼───────────┼───────────┼───────────
-Value1   │  Value2   │  Value3   │  Value4
-Data1    │  Data2    │  Data3    │  Data4
-```
+![Screenshot](https://github.com/user-attachments/assets/a04f708c-213f-4c66-8493-8b7016cabcd8)
 
 ## 📋 Requirements
 
@@ -151,7 +146,6 @@ When viewing an Excel file, the following keybindings are available:
 | Key | Action |
 |-----|--------|
 | `q` | Close the viewer buffer |
-| `r` | Reload/refresh the file |
 
 ## 🔧 Troubleshooting
 

@@ -143,9 +143,6 @@ except Exception as e:
 	-- Add some helpful keymaps
 	local opts = { buffer = buf, noremap = true, silent = true }
 	vim.keymap.set("n", "q", ":bd<CR>", opts)
-	vim.keymap.set("n", "r", function()
-		M.open_xls()
-	end, opts)
 end
 
 return M
