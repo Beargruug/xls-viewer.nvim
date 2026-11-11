@@ -62,17 +62,14 @@ except Exception as e:
     sys.exit(1)
 ]]
 
---- Make a cell safe for a single buffer line
+--- Coerce a decoded JSON value to a string
 ---@param cell any
 ---@return string
-function M.sanitize(cell)
-	if type(cell) ~= "string" then
-		cell = cell == vim.NIL and "" or tostring(cell)
+local function to_str(cell)
+	if type(cell) == "string" then
+		return cell
 	end
-	if cell:find("[\r\n\t]") then
-		cell = cell:gsub("\r\n", "↵"):gsub("[\r\n]", "↵"):gsub("\t", " ")
-	end
-	return cell
+	return cell == vim.NIL and "" or tostring(cell)
 end
 
 --- Load an Excel sheet via Python
@@ -96,21 +93,28 @@ function M.load_excel(filepath, sheet, callback)
 			return
 		end
 		for i, h in ipairs(data.headers) do
-			data.headers[i] = M.sanitize(h)
+			data.headers[i] = to_str(h)
 		end
 		for _, row in ipairs(data.rows) do
 			for i, cell in ipairs(row) do
-				row[i] = M.sanitize(cell)
+				row[i] = to_str(cell)
 			end
 		end
 		callback(data, nil)
 	end)
 end
 
+-- Extensions parsed in Lua (no Python needed)
+M.TEXT_EXTENSIONS = { csv = true, tsv = true, tab = true }
+
 --- Pick the loader for a file
 ---@param filepath string
 ---@return fun(filepath: string, sheet: any, callback: function)
 function M.loader_for(filepath)
+	local ext = vim.fn.fnamemodify(filepath, ":e"):lower()
+	if M.TEXT_EXTENSIONS[ext] then
+		return require("xls-viewer.csv").load
+	end
 	return M.load_excel
 end
 

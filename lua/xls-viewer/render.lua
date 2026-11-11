@@ -11,6 +11,16 @@ local SEP = "│"
 local SEP_BYTES = #SEP
 local ELLIPSIS = "…"
 
+--- Text shown for a cell: single line, tabs flattened (stored data stays raw)
+---@param cell string
+---@return string
+function M.display(cell)
+	if cell:find("[\r\n\t]") then
+		cell = cell:gsub("\r\n", "↵"):gsub("[\r\n]", "↵"):gsub("\t", " ")
+	end
+	return cell
+end
+
 --- Truncate a string to a maximum display width (multibyte safe)
 ---@param cell string
 ---@param width number
@@ -159,7 +169,8 @@ function M._compute_col_widths(headers, rows, overrides)
 	local col_widths = {}
 
 	local function consider(i, cell)
-		local width = math.max(math.min(vim.fn.strdisplaywidth(cell), cfg.max_column_width), cfg.min_column_width)
+		local width =
+			math.max(math.min(vim.fn.strdisplaywidth(M.display(cell)), cfg.max_column_width), cfg.min_column_width)
 		if not col_widths[i] or width > col_widths[i] then
 			col_widths[i] = width
 		end
@@ -199,7 +210,7 @@ function M._format_row(cells, col_widths)
 	local byte = 0
 
 	for j = 1, #col_widths do
-		local cell = M.truncate(cells[j] or "", col_widths[j])
+		local cell = M.truncate(M.display(cells[j] or ""), col_widths[j])
 		local fill = col_widths[j] - vim.fn.strdisplaywidth(cell) + pad
 		local slot = cell .. string.rep(" ", fill)
 
