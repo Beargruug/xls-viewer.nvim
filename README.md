@@ -139,6 +139,11 @@ require('xls-viewer').setup({
   -- (# number, D date, B boolean, T text, ∅ empty)
   type_indicators = true,
 
+  -- What `q` does when the viewer is the only thing open:
+  -- true = quit the window (exits Neovim if it's the last one)
+  -- false = only delete the buffer
+  quit_on_close = true,
+
   -- Async loading (non-blocking)
   async = true,
 
@@ -207,11 +212,12 @@ The plugin will automatically detect the file type and display it with formatted
 
 ### Keybindings
 
-When viewing an Excel file, the following keybindings are available:
+When viewing an Excel file, the following keybindings are available. Press `?` in the viewer to see them in a popup:
 
 | Key | Action |
 |-----|--------|
-| `q` | Close the viewer buffer |
+| `?` | Show help (all keys and commands) |
+| `q` | Close viewer: back to the previous buffer, or quit if nothing else is open |
 | `gs` | Select/switch sheet |
 | `s` | Sort by column under cursor (cycles: asc -> desc -> none) |
 | `/` | Search/filter rows |
@@ -311,7 +317,10 @@ Use `]p`/`[p` to navigate pages, or `gp` to jump to a specific page.
 lua/xls-viewer/
 ├── init.lua        Entry point, setup, autocmds, user commands
 ├── config.lua      Configuration defaults and highlight setup
-├── open.lua        Loader selection, buffer setup, keymaps
+├── open.lua        Loader selection, buffer setup
+├── keymaps.lua     Keymap table (also feeds the help window)
+├── help.lua        `?` floating help window
+├── close.lua       Smart close (previous buffer / window / quit)
 ├── python.lua      Shell-free Python runner with interpreter auto-detection
 ├── csv.lua         Pure-Lua CSV/TSV parser and writer
 ├── state.lua       Buffer-local state (data, sort, filter, page, view cache)
