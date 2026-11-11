@@ -176,6 +176,7 @@ function M._build_footer(st)
 		table.insert(parts, string.format("%d rows", total_visible))
 	end
 
+	table.insert(parts, "? help")
 	return table.concat(parts, " │ ")
 end
 

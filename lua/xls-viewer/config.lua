@@ -17,6 +17,9 @@ M.config = {
 	-- Show each column's detected type (# number, D date, B bool, T text, ∅ empty)
 	-- on the line under the header
 	type_indicators = true,
+	-- `q` when the viewer is the only thing open: true = quit the window
+	-- (exits Neovim if it's the last one), false = just delete the buffer
+	quit_on_close = true,
 	-- Async loading
 	async = true,
 	-- Highlight groups for data types
