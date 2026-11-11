@@ -1,15 +1,19 @@
 # 📊 xls-viewer.nvim
 
-A Neovim plugin for viewing Excel files (`.xls` and `.xlsx`) directly in your editor with beautiful column alignment, syntax highlighting, multi-sheet support, sorting, filtering, and pagination.
+A Neovim plugin for viewing Excel (`.xls`, `.xlsx`, `.xlsm`) and CSV/TSV files directly in your editor with beautiful column alignment, syntax highlighting, multi-sheet support, sorting, filtering, and pagination.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Neovim](https://img.shields.io/badge/Neovim-0.9%2B-green.svg)
 
 ## ✨ Features
 
-- 🔍 **Automatic Detection** - Opens Excel files automatically when you open `.xls` or `.xlsx` files
+- 🔍 **Automatic Detection** - Opens Excel files automatically when you open `.xls`, `.xlsx` or `.xlsm` files
+- 🧾 **CSV/TSV Support** - Opt-in, parsed in pure Lua (no Python needed); `,`/`;` delimiter auto-detected
 - 📑 **Multi-Sheet Support** - Browse and switch between sheets with `vim.ui.select`
-- 📐 **Column Alignment** - Perfectly aligned columns with configurable widths
+- 📐 **Column Alignment** - Perfectly aligned columns (Unicode-aware) with configurable widths
+- ↔️ **Column Resizing** - Widen/narrow the column under the cursor with `>` / `<`
+- 🏷️ **Type Indicators** - Detected column type shown under each header
+- 💾 **Export** - Save the filtered/sorted view as `.csv`, `.tsv` or `.xlsx`
 - 🎨 **Syntax Highlighting** - Color-coded cells based on data type (numbers, dates, booleans, nulls)
 - 🔀 **Column Sorting** - Sort by any column (cursor-based), cycles through asc/desc/none
 - 🔎 **Search & Filter** - Filter rows by pattern across all columns or a specific column
@@ -32,6 +36,8 @@ A Neovim plugin for viewing Excel files (`.xls` and `.xlsx`) directly in your ed
 - **pandas** - Python library for data manipulation
 - **openpyxl** - For reading `.xlsx` files
 - **xlrd** - For reading `.xls` files
+
+Python is only needed for Excel files. CSV/TSV files are parsed in Lua.
 
 ### Optional
 
@@ -110,8 +116,13 @@ use {
 
 ```lua
 require('xls-viewer').setup({
-  -- Python interpreter path
-  python_cmd = '/usr/bin/python3',
+  -- Python interpreter. nil = auto-detect: tries g:python3_host_prog,
+  -- python3 on $PATH and common install locations, and uses the first
+  -- one that has pandas installed.
+  python_cmd = nil,
+
+  -- File extensions opened in the viewer. Add "csv" / "tsv" to opt in.
+  filetypes = { 'xls', 'xlsx', 'xlsm' },
 
   -- Column display settings
   max_column_width = 50,
@@ -123,6 +134,10 @@ require('xls-viewer').setup({
 
   -- Pagination
   page_size = 500,
+
+  -- Show each column's detected type under the header
+  -- (# number, D date, B boolean, T text, ∅ empty)
+  type_indicators = true,
 
   -- Async loading (non-blocking)
   async = true,
@@ -151,6 +166,18 @@ require('xls-viewer').setup({
   -- python_cmd = '/path/to/venv/bin/python3',
 })
 ```
+
+#### CSV/TSV Files
+
+CSV handling is opt-in so the viewer doesn't take over files you want to edit:
+
+```lua
+require('xls-viewer').setup({
+  filetypes = { 'xls', 'xlsx', 'xlsm', 'csv', 'tsv' },
+})
+```
+
+`.tsv` uses tabs. For `.csv`, the delimiter (`,` `;` tab `|`) is detected from the header line.
 
 #### Custom Highlight Colors
 
@@ -188,7 +215,11 @@ When viewing an Excel file, the following keybindings are available:
 | `gs` | Select/switch sheet |
 | `s` | Sort by column under cursor (cycles: asc -> desc -> none) |
 | `/` | Search/filter rows |
+| `g/` | Filter a single column |
 | `<leader>F` | Clear active filter |
+| `>` / `<` | Widen / narrow column under cursor (accepts a count, e.g. `5>`) |
+| `=` | Reset width of column under cursor |
+| `g=` | Reset all column widths |
 | `gc` | Go to cell (e.g., `B5`, `AA12`) |
 | `]p` | Next page |
 | `[p` | Previous page |
@@ -204,6 +235,7 @@ When viewing an Excel file, the following keybindings are available:
 | `:XlsFilterClear` | Clear active filter |
 | `:XlsGoto [coord]` | Jump to cell (e.g., `:XlsGoto B5`) |
 | `:XlsPage [n/next/prev]` | Navigate to page |
+| `:XlsExport[!] [path]` | Export filtered/sorted view to `.csv`, `.tsv` or `.xlsx` (`!` overwrites without asking) |
 
 ### Multi-Sheet Navigation
 
@@ -235,7 +267,7 @@ Filter rows: alice
 
 The footer shows: `Filter: "alice" (3/100 rows)`
 
-Press `<leader>F` to clear the filter and show all rows again.
+Press `g/` to pick a column first and filter only that column. Press `<leader>F` to clear the filter and show all rows again.
 
 ### Cell Navigation
 
@@ -245,7 +277,23 @@ Press `gc` and enter a cell coordinate to jump directly:
 Go to cell (e.g., B5): C12
 ```
 
-This supports standard spreadsheet notation (A-Z, AA-ZZ for columns, numbers for rows).
+This supports standard spreadsheet notation (A-Z, AA-ZZ for columns, numbers for rows). Row numbers refer to the current view, so with a filter or sort active, `A5` is the 5th row you see.
+
+### Column Resizing
+
+Put the cursor on a column and press `>` to widen it or `<` to narrow it (2 cells per press; `5>` widens by 10). Widened columns may exceed `max_column_width`. Press `=` to reset the column, `g=` to reset all. Widths reset when you switch sheets.
+
+### Exporting
+
+`:XlsExport` writes every row of the current view (filter and sort applied, across all pages):
+
+```vim
+:XlsExport ~/Desktop/filtered.csv
+:XlsExport report.xlsx
+:XlsExport!  out.tsv     " overwrite without asking
+```
+
+Without a path it prompts, suggesting `<file>_<sheet>_export.csv` next to the source file. `.xlsx` export needs Python + pandas; number and date columns are written as real Excel types.
 
 ### Pagination
 
@@ -263,15 +311,19 @@ Use `]p`/`[p` to navigate pages, or `gp` to jump to a specific page.
 lua/xls-viewer/
 ├── init.lua        Entry point, setup, autocmds, user commands
 ├── config.lua      Configuration defaults and highlight setup
-├── open.lua        Async Python execution, file loading, buffer creation
-├── state.lua       Buffer-local state management (data, sort, filter, page)
-├── render.lua      Centralized rendering pipeline with extmark highlights
+├── open.lua        Loader selection, buffer setup, keymaps
+├── python.lua      Shell-free Python runner with interpreter auto-detection
+├── csv.lua         Pure-Lua CSV/TSV parser and writer
+├── state.lua       Buffer-local state (data, sort, filter, page, view cache)
+├── render.lua      Rendering pipeline, extmark highlights, type indicators
+├── layout.lua      Cursor <-> cell mapping (multibyte safe)
 ├── sheets.lua      Multi-sheet selection via vim.ui.select
-├── sort.lua        Cursor-based column sorting
+├── sort.lua        Column sorting
 ├── filter.lua      Search/filter with row count feedback
 ├── navigate.lua    Cell coordinate parsing and cursor jumping
 ├── paginate.lua    Page navigation
-└── align.lua       Legacy alignment module (kept for compatibility)
+├── resize.lua      Interactive column resizing
+└── export.lua      Export view to CSV/TSV/XLSX
 ```
 
 ## 🔧 Troubleshooting
@@ -292,7 +344,7 @@ lua/xls-viewer/
    /path/to/python3 -m pip install pandas openpyxl xlrd
    ```
 
-3. Or configure the plugin to use a specific Python:
+3. Or configure the plugin to use a specific Python (by default it tries `g:python3_host_prog`, `python3` on `$PATH`, `/usr/bin/python3`, then Homebrew paths):
    ```lua
    require('xls-viewer').setup({
      python_cmd = '/path/to/python3',
@@ -316,7 +368,9 @@ which -a python3
 
 ### File Not Opening
 
-**Problem:** Excel file opens as binary/garbled text.
+**Problem:** Excel file opens as binary/garbled text, or the buffer shows an error.
+
+If the buffer shows `xls-viewer: failed to load ...`, the message below it names the Python interpreter that was tried and the error it raised.
 
 **Solution:**
 
@@ -370,10 +424,10 @@ When reporting issues, please include:
 - [x] Cell navigation (jump to cell by coordinates)
 - [x] Syntax highlighting for different data types
 - [x] Large file optimization (pagination)
-- [ ] CSV/TSV file support
-- [ ] Column resizing (interactive)
-- [ ] Export filtered/sorted view
-- [ ] Virtual text for cell type indicators
+- [x] CSV/TSV file support
+- [x] Column resizing (interactive)
+- [x] Export filtered/sorted view
+- [x] Virtual text for cell type indicators
 
 ## 📄 License
 
