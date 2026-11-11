@@ -111,6 +111,20 @@ function M.setup(opts)
 		end),
 		{ nargs = "?", desc = "Navigate pages in XLS viewer" }
 	)
+
+	cmd("XlsExport", function(args)
+		local buf = vim.api.nvim_get_current_buf()
+		if not require("xls-viewer.state").get(buf) then
+			vim.notify("Not an xls-viewer buffer", vim.log.levels.WARN)
+			return
+		end
+		local export = require("xls-viewer.export")
+		if args.args ~= "" then
+			export.export(buf, args.args, args.bang)
+		else
+			export.prompt(buf)
+		end
+	end, { nargs = "?", bang = true, complete = "file", desc = "Export filtered/sorted view (.csv/.tsv/.xlsx)" })
 end
 
 return M
