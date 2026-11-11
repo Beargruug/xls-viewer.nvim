@@ -218,6 +218,18 @@ function M._setup_keymaps(buf)
 	map("gp", function()
 		require("xls-viewer.paginate").goto_page(buf)
 	end, "Go to page")
+	map(">", function()
+		require("xls-viewer.resize").resize(buf, vim.v.count1 * require("xls-viewer.resize").STEP)
+	end, "Widen column")
+	map("<", function()
+		require("xls-viewer.resize").resize(buf, -vim.v.count1 * require("xls-viewer.resize").STEP)
+	end, "Narrow column")
+	map("=", function()
+		require("xls-viewer.resize").reset(buf, false)
+	end, "Reset column width")
+	map("g=", function()
+		require("xls-viewer.resize").reset(buf, true)
+	end, "Reset all column widths")
 end
 
 return M
