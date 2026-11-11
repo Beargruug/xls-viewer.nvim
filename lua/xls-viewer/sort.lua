@@ -2,75 +2,41 @@ local M = {}
 
 local state = require("xls-viewer.state")
 local render = require("xls-viewer.render")
+local layout = require("xls-viewer.layout")
 
---- Determine which column the cursor is on (based on header row)
----@param buf number Buffer number
----@return number|nil col_index 1-based column index
-function M._get_cursor_column(buf)
-	local st = state.get(buf)
-	if not st then
-		return nil
+--- Resolve a column given as number or header name
+---@param st table
+---@param arg string
+---@return number|nil
+function M.resolve_column(st, arg)
+	local col = tonumber(arg)
+	if col then
+		return (col >= 1 and col <= #st.col_widths) and math.floor(col) or nil
 	end
-
-	local cursor = vim.api.nvim_win_get_cursor(0)
-	local cursor_col = cursor[2] -- 0-indexed byte position
-
-	local col_widths = st.col_widths
-	if not col_widths or #col_widths == 0 then
-		return nil
-	end
-
-	-- Walk through columns to find which one the cursor is in
-	local byte_offset = 0
-	local cfg = require("xls-viewer.config").config
-
-	for i = 1, #col_widths do
-		local col_total_width = col_widths[i] + cfg.padding
-		-- Account for separator (│ = 3 bytes) except after last column
-		local separator_width = (i < #col_widths) and 3 or 0
-		local next_offset = byte_offset + col_total_width + separator_width
-
-		if cursor_col < next_offset or i == #col_widths then
+	for i, h in ipairs(st.headers) do
+		if h:lower() == arg:lower() then
 			return i
 		end
-
-		byte_offset = next_offset
 	end
-
-	return #col_widths
+	return nil
 end
 
---- Sort by the column under the cursor (cycle: none -> asc -> desc -> none)
----@param buf number Buffer number
-function M.sort_by_cursor(buf)
+--- Set sort state and re-render
+---@param buf number
+---@param col number|nil Column index (nil clears sort)
+---@param dir string|nil "asc" | "desc"
+function M.set(buf, col, dir)
 	local st = state.get(buf)
 	if not st then
 		return
 	end
 
-	local col = M._get_cursor_column(buf)
-	if not col then
-		vim.notify("Could not determine column", vim.log.levels.WARN)
-		return
-	end
+	st.sort_col = col
+	st.sort_dir = col and (dir or "asc") or nil
+	st.current_page = 1
+	state.invalidate(st)
+	render.render(buf)
 
-	-- Cycle sort state
-	if st.sort_col == col then
-		if st.sort_dir == "asc" then
-			st.sort_dir = "desc"
-		elseif st.sort_dir == "desc" then
-			st.sort_col = nil
-			st.sort_dir = nil
-		end
-	else
-		st.sort_col = col
-		st.sort_dir = "asc"
-	end
-
-	-- Invalidate filter cache since sorted order changes
-	state.invalidate_filter(st)
-
-	-- Show sort status
 	if st.sort_col then
 		local header = st.headers[st.sort_col] or tostring(st.sort_col)
 		local arrow = st.sort_dir == "asc" and "▲" or "▼"
@@ -78,9 +44,61 @@ function M.sort_by_cursor(buf)
 	else
 		vim.notify("Sort cleared", vim.log.levels.INFO)
 	end
+end
 
-	-- Re-render
-	render.render(buf)
+--- Next sort direction for a column (cycle: none -> asc -> desc -> none)
+---@param st table
+---@param col number
+---@return string|nil
+function M.next_dir(st, col)
+	if st.sort_col ~= col then
+		return "asc"
+	end
+	if st.sort_dir == "asc" then
+		return "desc"
+	end
+	return nil
+end
+
+--- Sort by the column under the cursor
+---@param buf number Buffer number
+function M.sort_by_cursor(buf)
+	local st = state.get(buf)
+	if not st then
+		return
+	end
+
+	local col = layout.col_at_cursor(st)
+	if not col then
+		vim.notify("Could not determine column", vim.log.levels.WARN)
+		return
+	end
+
+	local lnum = vim.api.nvim_win_get_cursor(0)[1]
+	local dir = M.next_dir(st, col)
+	M.set(buf, dir and col or nil, dir)
+	layout.set_cursor(st, lnum, col)
+end
+
+--- :XlsSort [column]
+---@param buf number
+---@param arg string
+function M.command(buf, arg)
+	local st = state.get(buf)
+	if not st then
+		return
+	end
+	if arg == "" then
+		M.sort_by_cursor(buf)
+		return
+	end
+	local col = M.resolve_column(st, arg)
+	if not col then
+		vim.notify("Column not found: " .. arg, vim.log.levels.WARN)
+		return
+	end
+	local dir = M.next_dir(st, col)
+	M.set(buf, dir and col or nil, dir)
 end
 
 return M
