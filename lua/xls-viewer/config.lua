@@ -2,7 +2,11 @@ local M = {}
 
 -- Default configuration
 M.config = {
-	python_cmd = "/usr/bin/python3",
+	-- Python interpreter. nil = auto-detect: tries g:python3_host_prog, python3
+	-- on $PATH, then common install locations, and uses the first with pandas.
+	python_cmd = nil,
+	-- File extensions handled by the viewer
+	filetypes = { "xls", "xlsx", "xlsm" },
 	max_column_width = 50,
 	min_column_width = 3,
 	padding = 2,
@@ -25,7 +29,12 @@ M.config = {
 }
 
 function M.set(opts)
-	M.config = vim.tbl_deep_extend("force", M.config, opts or {})
+	opts = opts or {}
+	M.config = vim.tbl_deep_extend("force", M.config, opts)
+	-- Lists should replace, not merge by index
+	if opts.filetypes then
+		M.config.filetypes = opts.filetypes
+	end
 end
 
 --- Setup default highlight groups (linked to standard groups)

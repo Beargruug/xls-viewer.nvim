@@ -47,7 +47,7 @@ function M.select_sheet(buf)
 		end
 
 		-- Load the new sheet
-		open._load_and_render(buf, st.filepath, sheet_name)
+		open.load_sheet(buf, sheet_name)
 	end)
 end
 

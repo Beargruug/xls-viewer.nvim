@@ -2,104 +2,182 @@ local M = {}
 
 local config = require("xls-viewer.config")
 local state = require("xls-viewer.state")
+local layout = require("xls-viewer.layout")
 
 local ns_id = vim.api.nvim_create_namespace("xls_viewer_hl")
+M.ns_id = ns_id
+
+local SEP = "│"
+local SEP_BYTES = #SEP
+local ELLIPSIS = "…"
+
+--- Truncate a string to a maximum display width (multibyte safe)
+---@param cell string
+---@param width number
+---@return string
+function M.truncate(cell, width)
+	if vim.fn.strdisplaywidth(cell) <= width then
+		return cell
+	end
+	if width <= 1 then
+		return width == 1 and ELLIPSIS or ""
+	end
+	local n = width - 1
+	local part = vim.fn.strcharpart(cell, 0, n)
+	while n > 0 and vim.fn.strdisplaywidth(part) > width - 1 do
+		n = n - 1
+		part = vim.fn.strcharpart(cell, 0, n)
+	end
+	return part .. ELLIPSIS
+end
 
 --- Render the current state into the buffer
 ---@param buf number Buffer number
 function M.render(buf)
 	local st = state.get(buf)
-	if not st then
+	if not st or not vim.api.nvim_buf_is_valid(buf) then
 		return
 	end
 
-	local visible_rows = state.get_visible_rows(st)
+	local page_rows = state.get_page_rows(st)
 	local headers = st.headers
-	local col_widths = M._compute_col_widths(headers, visible_rows)
+	local col_widths = M._compute_col_widths(headers, page_rows, st.width_overrides)
 	st.col_widths = col_widths
 
-	-- Build lines
 	local lines = {}
+	local cells_by_line = {} -- [lnum] = displayed (truncated) cells, for highlighting
+	st.line_slots = {}
 
 	-- Header line
-	local header_line = M._format_row(headers, col_widths)
-	table.insert(lines, header_line)
+	local header_line, header_slots, header_cells = M._format_row(headers, col_widths)
+	lines[1] = header_line
+	st.line_slots[1] = header_slots
+	cells_by_line[1] = header_cells
 
 	-- Separator line
-	local separator = M._build_separator(col_widths)
-	table.insert(lines, separator)
+	lines[2] = M._build_separator(col_widths)
 
 	-- Data rows
-	for _, row in ipairs(visible_rows) do
-		table.insert(lines, M._format_row(row, col_widths))
+	for i, row in ipairs(page_rows) do
+		local lnum = layout.DATA_START + i - 1
+		local line, slots, cells = M._format_row(row, col_widths)
+		lines[lnum] = line
+		st.line_slots[lnum] = slots
+		cells_by_line[lnum] = cells
 	end
 
-	-- Footer (pagination info)
-	local total_visible = state.get_total_visible_rows(st)
-	local total_pages = state.get_total_pages(st)
-	local footer_parts = {}
+	-- Footer
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = M._build_footer(st)
 
-	-- Sheet info
-	if st.current_sheet then
-		table.insert(footer_parts, string.format("Sheet: %s", st.current_sheet))
-	end
-
-	-- Sort info
-	if st.sort_col and st.sort_dir then
-		local sort_header = headers[st.sort_col] or tostring(st.sort_col)
-		local arrow = st.sort_dir == "asc" and "▲" or "▼"
-		table.insert(footer_parts, string.format("Sort: %s %s", sort_header, arrow))
-	end
-
-	-- Filter info
-	if st.filter_pattern and st.filter_pattern ~= "" then
-		table.insert(footer_parts, string.format("Filter: \"%s\" (%d/%d rows)", st.filter_pattern, total_visible, #st.rows))
-	end
-
-	-- Page info
-	if total_pages > 1 then
-		local start_row = (st.current_page - 1) * st.page_size + 1
-		local end_row = math.min(st.current_page * st.page_size, total_visible)
-		table.insert(footer_parts, string.format("Page %d/%d (rows %d-%d of %d)", st.current_page, total_pages, start_row, end_row, total_visible))
-	else
-		table.insert(footer_parts, string.format("%d rows", total_visible))
-	end
-
-	-- Add empty line + footer
-	table.insert(lines, "")
-	table.insert(lines, table.concat(footer_parts, " │ "))
-
-	-- Write to buffer
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+	vim.api.nvim_set_option_value("modified", false, { buf = buf })
 
-	-- Apply highlights
-	M._apply_highlights(buf, st, lines, col_widths)
+	M._apply_highlights(buf, st, lines, cells_by_line, #page_rows)
+end
+
+--- Render a plain message (loading / error) into the buffer
+---@param buf number
+---@param msg_lines string[]
+---@param hl string|nil highlight group for all lines
+function M.message(buf, msg_lines, hl)
+	if not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+	local flat = {}
+	for _, l in ipairs(msg_lines) do
+		vim.list_extend(flat, vim.split(l, "\n", { plain = true }))
+	end
+	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, flat)
+	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+	vim.api.nvim_set_option_value("modified", false, { buf = buf })
+	vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
+	if hl then
+		for i = 0, #flat - 1 do
+			vim.api.nvim_buf_set_extmark(buf, ns_id, i, 0, { end_row = i, end_col = #flat[i + 1], hl_group = hl })
+		end
+	end
+end
+
+--- Build the footer line
+---@param st table
+---@return string
+function M._build_footer(st)
+	local total_visible = state.get_total_visible_rows(st)
+	local total_pages = state.get_total_pages(st)
+	local parts = {}
+
+	if st.current_sheet then
+		table.insert(parts, string.format("Sheet: %s", st.current_sheet))
+	end
+
+	if st.sort_col and st.sort_dir then
+		local sort_header = st.headers[st.sort_col] or tostring(st.sort_col)
+		local arrow = st.sort_dir == "asc" and "▲" or "▼"
+		table.insert(parts, string.format("Sort: %s %s", sort_header, arrow))
+	end
+
+	if st.filter_pattern and st.filter_pattern ~= "" then
+		local where = st.filter_column and (" in " .. (st.headers[st.filter_column] or st.filter_column)) or ""
+		table.insert(
+			parts,
+			string.format('Filter: "%s"%s (%d/%d rows)', st.filter_pattern, where, total_visible, #st.rows)
+		)
+	end
+
+	if total_pages > 1 then
+		local start_row = (st.current_page - 1) * st.page_size + 1
+		local end_row = math.min(st.current_page * st.page_size, total_visible)
+		table.insert(
+			parts,
+			string.format(
+				"Page %d/%d (rows %d-%d of %d)",
+				st.current_page,
+				total_pages,
+				start_row,
+				end_row,
+				total_visible
+			)
+		)
+	else
+		table.insert(parts, string.format("%d rows", total_visible))
+	end
+
+	return table.concat(parts, " │ ")
 end
 
 --- Compute column widths from headers and rows
 ---@param headers table Header cells
 ---@param rows table Data rows
+---@param overrides table|nil Per-column width overrides
 ---@return table col_widths
-function M._compute_col_widths(headers, rows)
+function M._compute_col_widths(headers, rows, overrides)
 	local cfg = config.config
 	local col_widths = {}
 
-	-- Start with header widths
-	for i, header in ipairs(headers) do
-		col_widths[i] = math.min(vim.fn.strdisplaywidth(header), cfg.max_column_width)
-		col_widths[i] = math.max(col_widths[i], cfg.min_column_width)
+	local function consider(i, cell)
+		local width = math.max(math.min(vim.fn.strdisplaywidth(cell), cfg.max_column_width), cfg.min_column_width)
+		if not col_widths[i] or width > col_widths[i] then
+			col_widths[i] = width
+		end
 	end
 
-	-- Check data rows
+	for i, header in ipairs(headers) do
+		consider(i, header)
+	end
 	for _, row in ipairs(rows) do
 		for i, cell in ipairs(row) do
-			local width = vim.fn.strdisplaywidth(cell)
-			local clamped = math.min(width, cfg.max_column_width)
-			clamped = math.max(clamped, cfg.min_column_width)
-			if not col_widths[i] or clamped > col_widths[i] then
-				col_widths[i] = clamped
+			consider(i, cell)
+		end
+	end
+
+	if overrides then
+		for i, w in pairs(overrides) do
+			if col_widths[i] then
+				col_widths[i] = math.max(1, w)
 			end
 		end
 	end
@@ -109,106 +187,103 @@ end
 
 --- Format a single row with aligned cells
 ---@param cells table Array of cell strings
----@param col_widths table Column widths
----@return string formatted line
+---@param col_widths table Column widths (display cells)
+---@return string line
+---@return table slots { {start_byte, slot_end_byte, content_end_byte}, ... } (0-based, end exclusive)
+---@return table shown Displayed (possibly truncated) cell strings
 function M._format_row(cells, col_widths)
-	local cfg = config.config
-	local formatted = {}
+	local pad = config.config.padding
+	local parts = {}
+	local slots = {}
+	local shown = {}
+	local byte = 0
 
 	for j = 1, #col_widths do
-		local cell = cells[j] or ""
+		local cell = M.truncate(cells[j] or "", col_widths[j])
+		local fill = col_widths[j] - vim.fn.strdisplaywidth(cell) + pad
+		local slot = cell .. string.rep(" ", fill)
 
-		-- Truncate if too long
-		if vim.fn.strdisplaywidth(cell) > cfg.max_column_width then
-			cell = string.sub(cell, 1, cfg.max_column_width - 3) .. "..."
-		end
-
-		local padding = col_widths[j] - vim.fn.strdisplaywidth(cell)
-		local padded_cell = cell .. string.rep(" ", padding + cfg.padding)
-		table.insert(formatted, padded_cell)
+		slots[j] = { byte, byte + #slot, byte + #cell }
+		shown[j] = cell
+		parts[j] = slot
+		byte = byte + #slot + SEP_BYTES
 	end
 
-	return table.concat(formatted, "│")
+	return table.concat(parts, SEP), slots, shown
 end
 
 --- Build separator line
 ---@param col_widths table Column widths
 ---@return string separator
 function M._build_separator(col_widths)
-	local cfg = config.config
+	local pad = config.config.padding
 	local parts = {}
 	for j = 1, #col_widths do
-		table.insert(parts, string.rep("─", col_widths[j] + cfg.padding))
+		parts[j] = string.rep("─", col_widths[j] + pad)
 	end
 	return table.concat(parts, "┼")
+end
+
+--- Pick the highlight group for a single cell
+---@param cell string
+---@param col_type string
+---@param hl table highlight config
+---@return string
+function M._cell_hl(cell, col_type, hl)
+	if state.is_null(cell) then
+		return hl.null
+	end
+	local l = cell:lower()
+	if col_type == "number" and tonumber(cell) then
+		return hl.number
+	elseif l == "true" or l == "false" then
+		return hl.boolean
+	elseif col_type == "date" or cell:match("^%d%d%d%d[%-/]%d%d[%-/]%d%d") then
+		return hl.date
+	end
+	return hl.string
+end
+
+local function hl_range(buf, line, start_col, end_col, group)
+	if end_col > start_col then
+		vim.api.nvim_buf_set_extmark(
+			buf,
+			ns_id,
+			line,
+			start_col,
+			{ end_row = line, end_col = end_col, hl_group = group }
+		)
+	end
 end
 
 --- Apply syntax highlights via extmarks
 ---@param buf number Buffer number
 ---@param st table Buffer state
 ---@param lines table Rendered lines
----@param col_widths table Column widths
-function M._apply_highlights(buf, st, lines, col_widths)
-	-- Clear existing highlights
+---@param cells_by_line table Displayed cells per line
+---@param n_rows number Number of data rows on this page
+function M._apply_highlights(buf, st, lines, cells_by_line, n_rows)
 	vim.api.nvim_buf_clear_namespace(buf, ns_id, 0, -1)
+	local hl = config.config.highlights
 
-	local cfg = config.config
-	local hl_config = cfg.highlights
+	hl_range(buf, 0, 0, #lines[1], hl.header)
+	hl_range(buf, 1, 0, #lines[2], hl.separator)
 
-	-- Highlight header (line 0)
-	if #lines > 0 then
-		vim.api.nvim_buf_add_highlight(buf, ns_id, hl_config.header, 0, 0, -1)
-	end
-
-	-- Highlight separator (line 1)
-	if #lines > 1 then
-		vim.api.nvim_buf_add_highlight(buf, ns_id, hl_config.separator, 1, 0, -1)
-	end
-
-	-- Highlight data cells by type
-	local data_start_line = 2 -- 0-indexed: header=0, sep=1, data starts at 2
-	local visible_rows = state.get_visible_rows(st)
-
-	for row_idx, row in ipairs(visible_rows) do
-		local line_idx = data_start_line + row_idx - 1
-		if line_idx >= #lines - 2 then
-			break -- Don't highlight footer
-		end
-
-		local byte_offset = 0
-		for col_idx = 1, #col_widths do
-			local cell = row[col_idx] or ""
-			local col_type = st.col_types[col_idx] or "string"
-
-			-- Determine cell type for this specific cell
-			local cell_hl = nil
-			if cell == "" or cell:lower() == "nan" or cell:lower() == "none" or cell:lower() == "null" then
-				cell_hl = hl_config.null
-			elseif col_type == "number" and tonumber(cell) then
-				cell_hl = hl_config.number
-			elseif col_type == "boolean" or cell:lower() == "true" or cell:lower() == "false" then
-				cell_hl = hl_config.boolean
-			elseif col_type == "date" or cell:match("^%d%d%d%d[%-/]%d%d[%-/]%d%d") then
-				cell_hl = hl_config.date
-			else
-				cell_hl = hl_config.string
+	for i = 1, n_rows do
+		local lnum = layout.DATA_START + i - 1
+		local slots = st.line_slots[lnum]
+		local cells = cells_by_line[lnum]
+		for col, slot in ipairs(slots) do
+			local cell = cells[col]
+			if cell ~= "" then
+				local group = M._cell_hl(cell, st.col_types[col] or "string", hl)
+				hl_range(buf, lnum - 1, slot[1], slot[3], group)
 			end
-
-			-- Apply highlight to the cell content (not padding)
-			if cell_hl and cell ~= "" then
-				local cell_width = math.min(vim.fn.strdisplaywidth(cell), cfg.max_column_width)
-				vim.api.nvim_buf_add_highlight(buf, ns_id, cell_hl, line_idx, byte_offset, byte_offset + #cell)
-			end
-
-			-- Advance byte offset: cell content + padding + separator (│ is 3 bytes in UTF-8)
-			byte_offset = byte_offset + col_widths[col_idx] + cfg.padding + 3 -- "│" = 3 bytes
 		end
 	end
 
-	-- Highlight footer line
-	if #lines >= 2 then
-		vim.api.nvim_buf_add_highlight(buf, ns_id, hl_config.separator, #lines - 1, 0, -1)
-	end
+	-- Footer line
+	hl_range(buf, #lines - 1, 0, #lines[#lines], hl.separator)
 end
 
 return M
