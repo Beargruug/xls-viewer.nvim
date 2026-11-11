@@ -65,7 +65,8 @@ function M.render(buf)
 	cells_by_line[1] = header_cells
 
 	-- Separator line
-	lines[2] = M._build_separator(col_widths)
+	local sep_starts
+	lines[2], sep_starts = M._build_separator(col_widths)
 
 	-- Data rows
 	for i, row in ipairs(page_rows) do
@@ -86,6 +87,25 @@ function M.render(buf)
 	vim.api.nvim_set_option_value("modified", false, { buf = buf })
 
 	M._apply_highlights(buf, st, lines, cells_by_line, #page_rows)
+	M._apply_type_indicators(buf, st, sep_starts)
+end
+
+--- Overlay a type glyph at the start of each column on the separator line
+---@param buf number
+---@param st table
+---@param starts table Byte offset of each column on the separator line
+function M._apply_type_indicators(buf, st, starts)
+	if not config.config.type_indicators or #st.rows == 0 then
+		return
+	end
+	local hl = config.config.highlights
+	for col, byte in ipairs(starts) do
+		local glyph = M.TYPE_GLYPHS[st.col_types[col] or "null"] or M.TYPE_GLYPHS.null
+		vim.api.nvim_buf_set_extmark(buf, ns_id, 1, byte, {
+			virt_text = { { glyph[1], hl[glyph[2]] } },
+			virt_text_pos = "overlay",
+		})
+	end
 end
 
 --- Render a plain message (loading / error) into the buffer
@@ -229,11 +249,24 @@ end
 function M._build_separator(col_widths)
 	local pad = config.config.padding
 	local parts = {}
+	local starts = {}
+	local byte = 0
 	for j = 1, #col_widths do
 		parts[j] = string.rep("─", col_widths[j] + pad)
+		starts[j] = byte
+		byte = byte + #parts[j] + #"┼"
 	end
-	return table.concat(parts, "┼")
+	return table.concat(parts, "┼"), starts
 end
+
+-- Glyph per detected column type, shown on the separator line
+M.TYPE_GLYPHS = {
+	number = { "#", "number" },
+	date = { "D", "date" },
+	boolean = { "B", "boolean" },
+	string = { "T", "string" },
+	null = { "∅", "null" },
+}
 
 --- Pick the highlight group for a single cell
 ---@param cell string

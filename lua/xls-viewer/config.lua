@@ -14,6 +14,9 @@ M.config = {
 	default_sheet = 0, -- 0 = first sheet, or sheet name string
 	-- Pagination
 	page_size = 500,
+	-- Show each column's detected type (# number, D date, B bool, T text, ∅ empty)
+	-- on the line under the header
+	type_indicators = true,
 	-- Async loading
 	async = true,
 	-- Highlight groups for data types
